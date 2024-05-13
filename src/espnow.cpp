@@ -1,55 +1,218 @@
 #include "espnow.h"
 
-static esp_now_peer_info_t peerInfo;
-// static uint8_t broadcastAddress[] = {0xc0, 0x49, 0xef, 0xe7, 0xc9, 0xF4}; // v4
-static uint8_t broadcastAddress[] = {0x80, 0x7d, 0x3a, 0x81, 0x6e, 0x80}; // devkit
-Callback* callback;
+#define PARING_TIME 5000
+
+Callback *callback;
+
+static uint8_t deviceMac[6];
+static PairingState pairingState = NOT_PAIRIED;
+uint8_t buffer[sizeof(Msg)];
+
+static unsigned long paringTime = 0;
+static unsigned long connectionTime = 0;
+static bool pinged = false;
+
+bool isSameMac(uint8_t *mac1, uint8_t *mac2) {
+    for (uint8_t i = 0; i < 6; i++) {
+        if (mac1[i] != mac2[i])
+            return false;
+    }
+    return true;
+}
+
+void printData(uint8_t *mac, Msg msg, bool send = false) {
+    Serial.printf("Data %s: ", send ? "sended to" : "received from");
+    for (uint8_t i = 0; i < 6; i++) {
+        Serial.printf("%X%c", mac[i], i == 5 ? '\n' : ':');
+    }
+
+    Serial.print("Type of message: ");
+    String type = "";
+    switch (msg.typeOfMsg) {
+        case PAIR:
+            type = "PAIR";
+            break;
+        case CONFIRM_PAIRING:
+            type = "CONFIRM_PAIRING";
+            break;
+        case NORMAL:
+            type = "NORMAL";
+            break;
+        case PAIRING_ACCEPT:
+            type = "PAIRING_ACCEPT";
+            break;
+        case PING:
+            type = "PING";
+            break;
+        case RETURN_OK:
+            type = "RETURN_OK";
+            break;
+    }
+    Serial.println(type);
+    Serial.println(pairingState);
+    Serial.print("Data: ");
+    for (uint8_t i = 0; i < msg.size; i++) {
+        Serial.printf("%X%c", mac[i], i == msg.size - 1 ? '\n' : ' ');
+    }
+}
+
+void sendMsg(uint8_t *mac, Msg msg) {
+    printData(mac, msg, true);
+
+    memcpy(buffer, &msg, sizeof(Msg));
+
+    esp_now_send(BROADCAST_MAC, buffer, sizeof(Msg));
+}
+
+void sendDataPairing(TypeOfMsg type = PAIR) {
+    Msg msg;
+    msg.typeOfMsg = type;
+    msg.data[0] = 1;
+    msg.size = 1;
+
+    sendMsg(BROADCAST_MAC, msg);
+}
+
+void sendData(uint8_t *data, uint8_t size) {
+    if (pairingState != PAIRED)
+        return;
+
+    Msg msg;
+    memcpy(msg.data, data, sizeof(size));
+    msg.size = size;
+    msg.typeOfMsg = NORMAL;
+
+    sendMsg(deviceMac, msg);
+}
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.print("\r\nLast Packet Send Status:\t");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+    // Serial.print("Sended Packet Status: ");
+    // Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 
 // Callback when data is received
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  Serial.print("mac: ");
-  for( int i = 0; i< 6; i++) {
-    Serial.printf("%2x:",mac[i]);                                     
-  }
-  Serial.print("\nBytes received: ");
-  Serial.println(len);
-  for( int i = 0; i< len; i++) {
-    Serial.print(incomingData[i]);
-  }
-  Serial.println();
-  callback(incomingData[0]);
+void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
+    Msg msg;
+    memcpy(&msg, data, sizeof(Msg));
+
+    printData((uint8_t *)mac, msg);
+
+    if (msg.typeOfMsg == PAIR && pairingState == PAIRING) {
+        memcpy(deviceMac, mac, 6);
+
+        Msg msg;
+        msg.typeOfMsg = CONFIRM_PAIRING;
+        sendMsg(deviceMac, msg);
+        return;
+    }
+
+    if (msg.typeOfMsg == CONFIRM_PAIRING && pairingState == PAIRING) {
+        memcpy(deviceMac, mac, 6);
+        pairingState = CONFIRMING_PAIRING;
+
+        Msg msg;
+        msg.typeOfMsg = CONFIRM_PAIRING;
+        sendMsg(deviceMac, msg);
+        return;
+    }
+
+    if (!isSameMac((uint8_t *)mac, deviceMac))
+        return;
+
+    pinged = true;
+    connectionTime = millis();
+
+
+    if (msg.typeOfMsg == CONFIRM_PAIRING && pairingState == CONFIRMING_PAIRING) {
+        pairingState = PAIRED;
+
+        Msg msg;
+        msg.typeOfMsg = PAIRING_ACCEPT;
+        sendMsg(deviceMac, msg);
+        return;
+    }
+
+    if (msg.typeOfMsg == PAIRING_ACCEPT && pairingState == CONFIRMING_PAIRING) {
+        pairingState = PAIRED;
+
+        Msg msg;
+        msg.typeOfMsg = PAIRING_ACCEPT;
+        sendMsg(deviceMac, msg);
+        return;
+    }
+
+    if (msg.typeOfMsg == PAIRING_ACCEPT && pairingState == PAIRED) {
+        Msg msg;
+        msg.typeOfMsg = RETURN_OK;
+        sendMsg(deviceMac, msg);
+        return;
+    }
+
+    if (msg.typeOfMsg == PING) {
+        Msg msg;
+        msg.typeOfMsg = RETURN_OK;
+        sendMsg(deviceMac, msg);
+        return;
+    }
+
+    if (msg.typeOfMsg == NORMAL && pairingState == PAIRED) {
+        callback(msg.data, msg.size);
+    }
+
+    // Serial.print("PairingState: ");
+    // Serial.println(pairingState);
 }
 
 void setupEspNow(Callback new_callback) {
     if (esp_now_init() != ESP_OK) {
-    Serial.println("Error initializing ESP-NOW");
-    return;
-  }
-  callback = new_callback;
-  // Once ESPNow is successfully Init, we will register for Send CB to
-  // get the status of Trasnmitted packet
-  esp_now_register_send_cb(OnDataSent);
-  
-  // Register peer
-  memcpy(peerInfo.peer_addr, broadcastAddress, 6);
-  peerInfo.channel = 0;  
-  peerInfo.encrypt = false;
-  
-  // Add peer        
-  if (esp_now_add_peer(&peerInfo) != ESP_OK){
-    Serial.println("Failed to add peer");
-    return;
-  }
-  // Register for a callback function that will be called when data is received
-  esp_now_register_recv_cb(OnDataRecv);
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
 
+    callback = new_callback;
+
+    esp_now_peer_info_t broadcastPeer;
+    memset(&broadcastPeer, 0, sizeof(broadcastPeer));
+    memcpy(broadcastPeer.peer_addr, BROADCAST_MAC, sizeof(BROADCAST_MAC));
+    broadcastPeer.channel = 0;
+    broadcastPeer.encrypt = false;
+    esp_now_add_peer(&broadcastPeer);
+
+    esp_now_register_send_cb(OnDataSent);
+
+    // Register for a callback function that will be called when data is received
+    esp_now_register_recv_cb(OnDataRecv);
 }
 
-void sendData(uint8_t cell) {
-  esp_now_send(broadcastAddress,&cell,1);
+bool esp_loop() {
+    if (pairingState == PAIRING && millis() - paringTime > PARING_TIME) {
+        Serial.println("pairing");
+        sendDataPairing();
+        paringTime = millis();
+        return false;
+    }
+
+    if (pairingState == PAIRED && millis() - connectionTime > PARING_TIME) {
+        connectionTime = millis();
+        
+        if (!pinged) {
+            Serial.println("nao pingou");
+            pairingState = PAIRING;
+            return false;
+        }
+
+        if (pairingState == PAIRED)
+            sendDataPairing(PING);
+        pinged = false;
+    }
+
+    if (pairingState == PAIRED)
+        return true;
+
+    return false;
+}
+
+void startPairing() {
+    if (pairingState != PAIRING)
+        pairingState = PAIRING;
 }
