@@ -36,3 +36,4 @@ void setupEspNow(Callback callback);
 void sendData(uint8_t *data, uint8_t size);
 bool esp_loop();
 void startPairing();
+void stopPairing(); // implementar

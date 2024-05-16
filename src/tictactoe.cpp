@@ -26,12 +26,12 @@ uint8_t Tictactoe::checkWinner() {
         return map[1][1];
 
     // Check if has empty spaces
-    for (int i = 0; i < 3; ++i) 
-        for (int j = 0; j < 3; ++j) 
-            if (map[i][j] == 0) 
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            if (map[i][j] == 0)
                 return 0;
 
-    //it's a draw
+    // it's a draw
     return 3;
 }
 
@@ -39,6 +39,10 @@ uint8_t Tictactoe::play(uint8_t cell, uint8_t player) {
     if (cell > 9 && player < 3)
         return 4;
 
+    if (turn == player)
+        return 5;
+
+    turn = player;
     uint8_t x = cell / 3;
     uint8_t y = cell % 3;
 
@@ -63,13 +67,13 @@ void Tictactoe::restart() {
 }
 
 void Tictactoe::printMap() {
-    for (uint8_t i = 0; i<3;i++) {
-        Serial.printf("%d|" ,map[i][0]);
-        Serial.printf("%d|" ,map[i][1]);
-        Serial.printf("%d\n",map[i][2]);
+    for (uint8_t i = 0; i < 3; i++) {
+        Serial.printf("%d|", map[i][0]);
+        Serial.printf("%d|", map[i][1]);
+        Serial.printf("%d\n", map[i][2]);
     }
     String msg = "";
-    switch(Tictactoe::result){
+    switch (Tictactoe::result) {
         case 0:
             msg = "The game is still running";
             break;

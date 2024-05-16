@@ -8,6 +8,7 @@ static uint8_t deviceMac[6];
 static PairingState pairingState = NOT_PAIRIED;
 uint8_t buffer[sizeof(Msg)];
 
+//se time
 static unsigned long paringTime = 0;
 static unsigned long connectionTime = 0;
 static bool pinged = false;
@@ -57,20 +58,20 @@ void printData(uint8_t *mac, Msg msg, bool send = false) {
 }
 
 void sendMsg(uint8_t *mac, Msg msg) {
-    printData(mac, msg, true);
+    // printData(mac, msg, true);
 
     memcpy(buffer, &msg, sizeof(Msg));
 
     esp_now_send(BROADCAST_MAC, buffer, sizeof(Msg));
 }
 
-void sendDataPairing(TypeOfMsg type = PAIR) {
+void sendDataPairing(uint8_t *mac, TypeOfMsg type = PAIR) {
     Msg msg;
     msg.typeOfMsg = type;
     msg.data[0] = 1;
     msg.size = 1;
 
-    sendMsg(BROADCAST_MAC, msg);
+    sendMsg(mac, msg);
 }
 
 void sendData(uint8_t *data, uint8_t size) {
@@ -95,14 +96,12 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
     Msg msg;
     memcpy(&msg, data, sizeof(Msg));
 
-    printData((uint8_t *)mac, msg);
+    // printData((uint8_t *)mac, msg);
 
     if (msg.typeOfMsg == PAIR && pairingState == PAIRING) {
         memcpy(deviceMac, mac, 6);
 
-        Msg msg;
-        msg.typeOfMsg = CONFIRM_PAIRING;
-        sendMsg(deviceMac, msg);
+        sendDataPairing(BROADCAST_MAC,CONFIRM_PAIRING);
         return;
     }
 
@@ -110,9 +109,7 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
         memcpy(deviceMac, mac, 6);
         pairingState = CONFIRMING_PAIRING;
 
-        Msg msg;
-        msg.typeOfMsg = CONFIRM_PAIRING;
-        sendMsg(deviceMac, msg);
+        sendDataPairing(BROADCAST_MAC,CONFIRM_PAIRING);
         return;
     }
 
@@ -122,45 +119,28 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
     pinged = true;
     connectionTime = millis();
 
-
     if (msg.typeOfMsg == CONFIRM_PAIRING && pairingState == CONFIRMING_PAIRING) {
         pairingState = PAIRED;
 
-        Msg msg;
-        msg.typeOfMsg = PAIRING_ACCEPT;
-        sendMsg(deviceMac, msg);
+        sendDataPairing(deviceMac,PAIRING_ACCEPT);
         return;
     }
 
     if (msg.typeOfMsg == PAIRING_ACCEPT && pairingState == CONFIRMING_PAIRING) {
         pairingState = PAIRED;
 
-        Msg msg;
-        msg.typeOfMsg = PAIRING_ACCEPT;
-        sendMsg(deviceMac, msg);
+        sendDataPairing(deviceMac,PAIRING_ACCEPT);
         return;
     }
 
-    if (msg.typeOfMsg == PAIRING_ACCEPT && pairingState == PAIRED) {
-        Msg msg;
-        msg.typeOfMsg = RETURN_OK;
-        sendMsg(deviceMac, msg);
-        return;
-    }
-
-    if (msg.typeOfMsg == PING) {
-        Msg msg;
-        msg.typeOfMsg = RETURN_OK;
-        sendMsg(deviceMac, msg);
+    if (msg.typeOfMsg == PAIRING_ACCEPT && pairingState == PAIRED || msg.typeOfMsg == PING) {
+        sendDataPairing(deviceMac,RETURN_OK);
         return;
     }
 
     if (msg.typeOfMsg == NORMAL && pairingState == PAIRED) {
         callback(msg.data, msg.size);
     }
-
-    // Serial.print("PairingState: ");
-    // Serial.println(pairingState);
 }
 
 void setupEspNow(Callback new_callback) {
@@ -187,14 +167,14 @@ void setupEspNow(Callback new_callback) {
 bool esp_loop() {
     if (pairingState == PAIRING && millis() - paringTime > PARING_TIME) {
         Serial.println("pairing");
-        sendDataPairing();
+        sendDataPairing(BROADCAST_MAC,PAIR);
         paringTime = millis();
         return false;
     }
 
     if (pairingState == PAIRED && millis() - connectionTime > PARING_TIME) {
         connectionTime = millis();
-        
+
         if (!pinged) {
             Serial.println("nao pingou");
             pairingState = PAIRING;
@@ -202,7 +182,7 @@ bool esp_loop() {
         }
 
         if (pairingState == PAIRED)
-            sendDataPairing(PING);
+            sendDataPairing(deviceMac,PING);
         pinged = false;
     }
 

@@ -2,13 +2,6 @@
 
 #include <Arduino.h>
 
-/// @brief just to know what player is playing
-enum player {
-    one,
-    two
-};
-
-
 /// @brief handle a tic-tac-toe board and game
 class Tictactoe {
     private:
@@ -16,6 +9,7 @@ class Tictactoe {
         uint8_t teste;
         uint8_t result = 0;
         uint8_t checkWinner();
+        uint8_t turn;
 
         void printMap();
     public:
@@ -31,6 +25,7 @@ class Tictactoe {
     /// @return - 2: Player 2 won
     /// @return - 3: The game ended in a draw
     /// @return - 4: The play was not possible (eg: cell already assigned or cell not in range)
+    /// @return - 5: Not your turn 
     uint8_t play(uint8_t cell, uint8_t player);
     
     /// @brief Restart the board
